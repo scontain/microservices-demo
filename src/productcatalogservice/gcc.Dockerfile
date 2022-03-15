@@ -12,35 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM node:12-alpine as base
+FROM golang:1.15-alpine AS builder
+RUN apk add --no-cache ca-certificates git gcc-go musl-dev
 
-FROM base as builder
+WORKDIR /src
+# restore dependencies
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN mkdir /productcatalogservice
+RUN go build -compiler=gccgo -buildmode=exe -gccgoflags=-g -o /productcatalogservice/server .
 
-# Some packages (e.g. @google-cloud/profiler) require additional
-# deps for post-install scripts
-RUN apk add --update --no-cache \
-    python3 \
-    make \
-    g++
-
-WORKDIR /usr/src/app
-
-COPY package*.json ./
-
-RUN npm install --only=production
-
-FROM base
+FROM alpine:3.14 as release
+RUN apk add --no-cache libgo ca-certificates git gcc-go musl-dev
+WORKDIR /productcatalogservice
+COPY --from=builder /productcatalogservice/server /productcatalogservice/server
 
 RUN GRPC_HEALTH_PROBE_VERSION=v0.3.6 && \
     wget -qO/bin/grpc_health_probe https://github.com/grpc-ecosystem/grpc-health-probe/releases/download/${GRPC_HEALTH_PROBE_VERSION}/grpc_health_probe-linux-amd64 && \
     chmod +x /bin/grpc_health_probe
-
-WORKDIR /usr/src/app
-
-COPY --from=builder /usr/src/app/node_modules ./node_modules
-
-COPY . .
-
-EXPOSE 50051
-
-ENTRYPOINT [ "node", "index.js" ]
+COPY products.json .
+EXPOSE 3550
+ENTRYPOINT ["/productcatalogservice/server"]

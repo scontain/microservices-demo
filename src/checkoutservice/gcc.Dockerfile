@@ -12,35 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM node:12-alpine as base
+FROM golang:1.15-alpine as builder
+RUN apk add --no-cache ca-certificates git gcc gcc-go musl-dev
+WORKDIR /src
 
-FROM base as builder
+# restore dependencies
+COPY go.mod go.sum ./
+RUN go mod download
 
-# Some packages (e.g. @google-cloud/profiler) require additional
-# deps for post-install scripts
-RUN apk add --update --no-cache \
-    python3 \
-    make \
-    g++
+COPY . .
+RUN go build -compiler gccgo -buildmode=exe -gccgoflags -g -o /checkoutservice .
 
-WORKDIR /usr/src/app
-
-COPY package*.json ./
-
-RUN npm install --only=production
-
-FROM base
-
+FROM alpine:3.14 as release
+WORKDIR /src
+RUN apk add --no-cache libgo ca-certificates gcc-go musl-dev
+COPY --from=builder /checkoutservice /src/checkoutservice
 RUN GRPC_HEALTH_PROBE_VERSION=v0.3.6 && \
     wget -qO/bin/grpc_health_probe https://github.com/grpc-ecosystem/grpc-health-probe/releases/download/${GRPC_HEALTH_PROBE_VERSION}/grpc_health_probe-linux-amd64 && \
     chmod +x /bin/grpc_health_probe
-
-WORKDIR /usr/src/app
-
-COPY --from=builder /usr/src/app/node_modules ./node_modules
-
-COPY . .
-
-EXPOSE 50051
-
-ENTRYPOINT [ "node", "index.js" ]
+EXPOSE 5050
+ENTRYPOINT ["/src/checkoutservice"]
